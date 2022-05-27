@@ -4,6 +4,7 @@ use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseOrV
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::U128;
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+use serde_json::json;
 
 use crate::msg::{AprInfo, UserInfo, AmountInfo, FarmInfo, PotInfo, Status};
 use crate::util::{Check};
@@ -109,41 +110,35 @@ impl Pool {
         }
 
         self.append_amount_history(fund, true);
-        self.deposit_potinfo(account, fund, qualified);
+        self.deposit_potinfo(account.clone(), fund, qualified);
     
         Promise::new(self.treasury.clone()).transfer(fund);
-        // Promise::new(self.vnear.clone()).function_call("Mint", arguments: Vec<u8>, amount: Balance, gas: Gas)
-        // let send2_treasury = BankMsg::Send { 
-        //     to_address: TREASURY.load(deps.storage)?.to_string(),
-        //     amount: _fund
-        // };
-    
-        // let mint2_user = WasmMsg::Execute { 
-        //     contract_addr: VUST.load(deps.storage)?.to_string(), 
-        //     msg: to_binary(
-        //         &Cw20ExecuteMsg::Mint{
-        //             recipient: wallet.to_string(), 
-        //             amount: fund.amount
-        //         }
-        //     )?, 
-        //     funds: vec![]
-        // };
-    
-        // Ok(Response::new()
-        //     .add_attribute("action", "desposit")
-        //     .add_messages([
-        //         CosmosMsg::Bank(send2_treasury), 
-        //         CosmosMsg::Wasm(mint2_user)
-        //     ])
-        //     .add_attribute("amount", fund.amount.to_string())
-        // )
+
+        let arguments = json!({ "account_id": account.clone().to_string(), "amount": fund.to_string() }) // method arguments
+                .to_string()
+                .into_bytes();
+        Promise::new(self.vnear.clone())
+            .function_call("ft_mint".to_string(), arguments, 0, Gas(50_000_000_000_000));
     }
     
     pub fn get_status(self, account: AccountId) -> Status{
+        let near_userinfo = match self.near_user_infos.get(&account){
+            Some(info) => info,
+            None => UserInfo{
+                account: account.clone(),
+                amount: 0,
+                reward_amount: 0,
+                deposit_time: 0
+            }
+        };
+
         Status {
+            amount_history: self.amount_history,
             near_apr_history: self.near_apr_history,
+            near_userinfo: near_userinfo,
             farm_price: self.farm_price,
-            farm_starttime: self.farm_starttime
+            farm_starttime: self.farm_starttime,
+            near_total_rewards: self.near_total_rewards
         }
     }
 }
@@ -286,12 +281,20 @@ mod tests {
         let vnear = AccountId::new_unchecked("vnear.testnet".to_string());
         let near_apr = 121;
         // Set up the testing context and unit test environment
-        let context = get_context(alice.clone());
+        let mut context = get_context(alice.clone());
         testing_env!(context.build());
 
         let mut pool = Pool::new(owner, treasury, near_apr, vnear );
 
-        // let res = pool.get_status(alice);
-        // println!("{:?}", res.near_apr_history[0].apr);
+        testing_env!(context
+            .storage_usage(env::storage_usage())
+            .attached_deposit(1)
+            .predecessor_account_id(alice.clone())
+            .block_timestamp(12345678)
+            .build());
+        pool.deposit_near(true);
+
+        let res = pool.get_status(alice.clone());
+        println!("{:?}", res.near_userinfo);
     }
 }
