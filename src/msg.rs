@@ -33,17 +33,17 @@ impl fmt::Debug for UserInfo {
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct AmountInfo{
-    pub near_amount: u128,
-    pub near_reward: u128,
+    pub amount: Vec<u128>,
+    pub reward: Vec<u128>,
     pub time: u64,
 }
 impl fmt::Debug for AmountInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(near_amount:{}, near_reward:{}, time:{})", self.near_amount, self.near_reward, self.time)
+        write!(f, "(near_amount:{}, near_reward:{}, time:{})", self.amount[0], self.reward[0], self.time)
     }
 }
 
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone)]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
 pub struct FarmInfo{
     pub account: AccountId,
@@ -55,24 +55,36 @@ impl fmt::Debug for FarmInfo {
     }
 }
 
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
-#[serde(crate = "near_sdk::serde")]
-pub struct Status{
-    pub amount_history: Vec<AmountInfo>,
-    pub near_apr_history: Vec<AprInfo>,
 
-    pub near_userinfo: UserInfo,
-    pub farm_price: u128,
-    // pub farm_info: FarmInfo,
-    pub farm_starttime: u64,
-    pub near_total_rewards: u128,
-    // pub pot_info: PotInfo,
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+pub struct PotInfo{
+    pub account: AccountId,
+    pub amount: u128,
+    pub qualified_amount: u128,
+}
+impl fmt::Debug for PotInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(account:{}, amount:{}, qualified_amount:{})", self.account, self.amount, self.qualified_amount)
+    }
+}
+
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+pub struct DepositParam{
+    pub coin: String,
+    pub qualified: bool,
 }
 
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct PotInfo{
-    pub account: AccountId,
-    pub near_amount: u128,
-    pub qualified_near_amount: u128,
+pub struct Status{
+    pub amount_history: Vec<AmountInfo>,
+
+    pub user_info: Vec<UserInfo>,
+    pub farm_price: u128,
+    pub farm_info: FarmInfo,
+    pub farm_starttime: u64,
+    pub total_rewards: Vec<u128>,
+    pub pot_info: Vec<PotInfo>,
 }

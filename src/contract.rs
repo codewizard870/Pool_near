@@ -1,30 +1,49 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseOrValue, require, log, 
     Gas};
-use near_sdk::collections::LookupMap;
+use near_sdk::collections::{LookupMap, UnorderedMap, Vector};
 use near_sdk::json_types::U128;
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use serde_json::json;
 
-use crate::msg::{AprInfo, UserInfo, AmountInfo, FarmInfo, PotInfo, Status};
+use crate::msg::{AprInfo, UserInfo, AmountInfo, FarmInfo, PotInfo, Status, DepositParam};
 use crate::util::{Check};
 
 const BASE_GAS: u64 = 5_000_000_000_000;
 const PROMISE_CALL: u64 = 5_000_000_000_000;
 const GAS_FOR_FT_ON_TRANSFER: Gas = Gas(BASE_GAS + PROMISE_CALL);
+const FARM_AMOUNT: u128 = 114_000_000;
+const FARM_PERIOD: u64 = 5_184_000; //60 days in second
+
+pub const COIN_COUNT: usize = 7;
+const COINS: [&str; 7] = ["USDC", "USDT", "DAI", "USN", "wBTC", "ETH", "wNEAR"];
+const DECIMALS: [u32; 7] = [6, 6, 18, 18, 8, 18, 24];
+
+pub fn getcoin_id(coin: String) -> usize{
+    let res = match coin.as_str(){
+        "USDC" => 0,
+        "USDT" => 1,
+        "DAI" => 2,
+        "USN" => 3,
+        "wBTC" => 4,
+        "ETH" => 5,
+        "wNEAR" => 6,
+        _ => env::panic_str("Not correct coin type")
+    };
+    res
+}
+
 
 #[near_bindgen]
 #[derive(PanicOnDefault, BorshDeserialize, BorshSerialize)]
 pub struct Pool {
     owner: AccountId,
     treasury: AccountId,
-    vnear: AccountId,
-    near_apr_history: Vec<AprInfo>,
-    near_user_infos: LookupMap<AccountId, UserInfo>,
-    near_total_rewards: u128,
+    apr: Vec<u32>,
+    user_infos: UnorderedMap<AccountId, Vec<UserInfo>>, // for all coin
+    total_rewards: Vec<u128>,
     
     amount_history: Vec<AmountInfo>,
-    
     //--------farm-----------------
     farm_starttime: u64,
     farm_price: u128,
@@ -32,118 +51,208 @@ pub struct Pool {
     total_farmed: u128,
     
     //--------qualify----------------------
-    pot_infos: LookupMap<AccountId, PotInfo>
+    pot_infos: LookupMap<AccountId, Vec<PotInfo>>,
+
+    //-------_token address--------------------
+    token_address: Vec<AccountId>
 }
 
 #[near_bindgen]
 impl Pool {
     #[init]
-    pub fn new(owner: Option<AccountId>, treasury: AccountId, near_apr: u16, vnear: AccountId ) -> Self {
+    pub fn new(owner: Option<AccountId>, treasury: AccountId ) -> Self {
+        let wnear = AccountId::new_unchecked("ft.alenzertest.testnet".to_string());
         Self {
             owner: match owner{
                 Some(_owner) => _owner,
                 None => env::current_account_id()
             },
             treasury: treasury,
-            vnear: vnear,
-            near_apr_history: vec![
-                AprInfo{
-                    apr: near_apr,
-                    time: env::block_timestamp()
-                }],
-            near_user_infos: LookupMap::new(b"n"),
-            near_total_rewards: 0,
+            apr: vec![1487, 1487, 1487, 1487, 987, 987, 987],
+            user_infos: UnorderedMap::new(b"n"),
+            total_rewards: vec![0; COIN_COUNT],
             amount_history: Vec::new(),
             farm_starttime: env::block_timestamp(),
             farm_price: 25,
             farm_infos: LookupMap::new(b"f"),
             total_farmed: 0,
-            pot_infos: LookupMap::new(b"p")
+            pot_infos: LookupMap::new(b"p"),
+            token_address: vec![wnear; COIN_COUNT]
         }
     }
 
-    pub fn set_config(&mut self, owner: Option<AccountId>, treasury: Option<AccountId>, vnear: Option<AccountId>){
+    pub fn set_config(&mut self, owner: Option<AccountId>, treasury: Option<AccountId>){
+        self.check_onlyowner();
         if let Some(account) = owner {
             self.owner = account;
         }
         if let Some(account) = treasury {
             self.treasury = account;
         }
-        if let Some(account) = vnear {
-            self.vnear = account;
+    }
+
+    pub fn set_tokenaddress(&mut self, token: [AccountId; COIN_COUNT]){
+        self.check_onlyowner();
+        for i in 0..COIN_COUNT{
+            self.token_address[i] = token[i].clone();
         }
     }
 
-    pub fn set_apr_near(&mut self, apr: u16 ){
+    pub fn set_apr(&mut self, coin: String, apr: u32 ){
         self.check_onlyowner();
 
-        let apr_info = AprInfo{
-            apr,
-            time: env::block_timestamp(),
-        };
-    
-        self.near_apr_history.push(apr_info);
+        self.apr[getcoin_id(coin)] = apr;
     }
 
-    #[payable]
-    pub fn deposit_near(&mut self, qualified: bool) {
-        let account = env::predecessor_account_id();
-        let fund = env::attached_deposit();
-    
-        if fund == 0 {
-            env::panic_str("None deposit");
+    pub fn withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT]){
+        self.check_onlytreasury();
+
+        let mut user_info = self.user_infos.get(&account).unwrap();
+        let coin_id = getcoin_id(coin.clone());
+        
+        if user_info[coin_id].amount + user_info[coin_id].reward_amount < amount {
+            return env::panic_str("Not enough balance")
         }
-    
-        if let Some(mut user_info) = self.near_user_infos.get(&account){
-            user_info.amount += fund;
-            user_info.deposit_time = env::block_timestamp();
-            self.near_user_infos.insert(&account, &user_info);
+
+        let remain;
+        if user_info[coin_id].amount >= amount {
+            remain = amount;
+            user_info[coin_id].amount -= amount;
         } else {
-            self.near_user_infos.insert(&account,
-                &UserInfo{
-                    account: account.clone(),
-                    amount: fund,
-                    reward_amount: 0,
-                    deposit_time: env::block_timestamp(),
-                }
-            );
+            remain = user_info[coin_id].amount;
+            user_info[coin_id].amount = 0;
+            user_info[coin_id].reward_amount -= amount - remain;
+
+            self.total_rewards[coin_id] -= amount - remain;
         }
 
-        self.append_amount_history(fund, true);
-        self.deposit_potinfo(account.clone(), fund, qualified);
-    
-        Promise::new(self.treasury.clone()).transfer(fund);
+        self.append_amount_history(coin.clone(), remain, false);
+        self.withdraw_potinfo(account.clone(), coin.clone(), remain);
+        self.farm_withdraw(account.clone(), coin.clone(), remain, price);
 
-        let arguments = json!({ "account_id": account.clone().to_string(), "amount": fund.to_string() }) // method arguments
-                .to_string()
-                .into_bytes();
-        Promise::new(self.vnear.clone())
-            .function_call("ft_mint".to_string(), arguments, 0, Gas(50_000_000_000_000));
+        self.user_infos.insert(&account.clone(), &user_info);
     }
+
+    fn get_user_info(&self, owner_id: &AccountId) -> Vec<UserInfo> {
+        self.user_infos.get(owner_id).unwrap()
+    }
+
+    pub fn rewards(&mut self){
+        self.check_onlytreasury();
+
+        let available_time = env::block_timestamp() - 86400;
+        let keys = self.user_infos.to_vec();
+        for i in 0..keys.len()
+        {
+            let key = keys[i].0.clone();
+            let mut user_info = self.get_user_info(&key);
+            for coin in COINS {   
+                let coin_id = getcoin_id(coin.to_string());
+
+                if user_info[coin_id].deposit_time < available_time { 
+                    let apr = self.apr[coin_id];
+                    let rewards = (user_info[coin_id].amount + user_info[coin_id].reward_amount) * (apr as u128) / 10_000 / 365;
+                    user_info[coin_id].reward_amount += rewards;
+                    self.total_rewards[coin_id] += rewards;
+                }
+            }
+            self.user_infos.insert(&key, &user_info);
+        }
+
+        let last_index = self.amount_history.len() - 1;
+        let mut info = self.amount_history[last_index].clone();
+        for i in 0..COIN_COUNT{
+            info.reward[i] = self.total_rewards[i];
+        }
+        self.amount_history.push(info);
+    }
+
+    pub fn farm(&mut self, price: [u128; COIN_COUNT]){
+        self.check_onlytreasury();
     
+        let current_time = env::block_timestamp();
+        let farm_starttime = self.farm_starttime;
+        let farm_endtime = farm_starttime + FARM_PERIOD;
+    
+    //-----------------condition check------------------------------
+        if farm_starttime == 0 || current_time < farm_starttime  {
+            return env::panic_str("NotStartedFarming")
+        }
+    
+        let mut total_farm = self.total_farmed;
+        if farm_endtime < current_time || total_farm > FARM_AMOUNT {
+            return;
+        }
+    //--------------------calc farming amount---------------------
+        let mut total_as_usd = 0;
+    
+        let keys = self.user_infos.to_vec();
+        for i in 0..keys.len()
+        {
+            let key = keys[i].0.clone();
+            let user_info = self.get_user_info(&key); //(x/10^y) * (price / 10^2) /10^3 * 24 = x/(10^y)*price*24/10^5
+            let mut farm = 0;
+            
+            for i in 0..COIN_COUNT{
+                farm += user_info[i].amount * price[i] * 24 / (10u128).pow(DECIMALS[i]) / (10u128).pow(5);
+                total_as_usd += user_info[i].amount * price[i];
+            }
+            self.update_farm_info(key, farm);
+            total_farm += farm;
+        }
+
+        self.total_farmed = total_farm;
+    //-------------------recalc token price ------------------------------------
+        //x/10^6) * (price / 10^2) / 20,000,000
+        let multiple = total_as_usd / (100_000_000u128) / (20_000_000u128);
+        //0.25*(1.2)^multiple = 25/10^2 * (12) ^ multiple) /(10^multiple) *10^2
+        let price = 25 * (12u128).pow(multiple as u32) / 
+                            (10u128).pow(multiple as u32);
+        self.farm_price = price as u128;
+    }
+        
     pub fn get_status(self, account: AccountId) -> Status{
-        let near_userinfo = match self.near_user_infos.get(&account){
+        let userinfo = match self.user_infos.get(&account){
             Some(info) => info,
-            None => UserInfo{
+            None => vec![UserInfo{
                 account: account.clone(),
                 amount: 0,
                 reward_amount: 0,
                 deposit_time: 0
+            }; COIN_COUNT]
+        };
+
+        let farminfo = match self.farm_infos.get(&account){
+            Some(info) => info,
+            None => FarmInfo{
+                account: account.clone(),
+                amount: 0,
             }
+        };
+
+        let potinfo = match self.pot_infos.get(&account){
+            Some(info) => info,
+            None => vec![PotInfo{
+                account: account.clone(),
+                amount: 0,
+                qualified_amount: 0
+            }; COIN_COUNT]
         };
 
         Status {
             amount_history: self.amount_history,
-            near_apr_history: self.near_apr_history,
-            near_userinfo: near_userinfo,
+            user_info: userinfo,
             farm_price: self.farm_price,
+            farm_info: farminfo,
             farm_starttime: self.farm_starttime,
-            near_total_rewards: self.near_total_rewards
+            total_rewards: self.total_rewards,
+            pot_info: potinfo
         }
     }
 }
 
 impl Check for Pool{
+
     fn check_onlyowner(&self){
         if self.owner != env::predecessor_account_id() {
             env::panic_str("Not Authorized")
@@ -155,28 +264,66 @@ impl Check for Pool{
         }
     }
 
-    fn append_amount_history(&mut self, near_amount: u128,  bAdd: bool){
+    fn deposit(&mut self, coin: String, amount: u128, qualified: bool) {
+        let account = env::predecessor_account_id();
+ 
+        let coin_id = getcoin_id(coin.clone());
+        if let Some(mut user_info) = self.user_infos.get(&account){
+            user_info[coin_id].amount += amount;
+            user_info[coin_id].deposit_time = env::block_timestamp();
+
+            self.user_infos.insert(&account, &user_info);
+        } else {
+            let mut user_info = vec![UserInfo{
+                account: account.clone(),
+                amount: 0,
+                reward_amount: 0,
+                deposit_time: 0
+            }; 7];
+            user_info[coin_id].amount = amount;
+            user_info[coin_id].deposit_time = env::block_timestamp();
+
+            self.user_infos.insert(&account, &user_info);
+        }
+
+        self.append_amount_history(coin.clone(), amount, true);
+        self.deposit_potinfo(account.clone(), coin.clone(), amount, qualified);
+
+        let arguments = json!({ "receiver_id": self.treasury.to_string(), "amount": amount.to_string() }) // method arguments
+                .to_string()
+                .into_bytes();
+        Promise::new(self.token_address[coin_id].clone())
+            .function_call("ft_transfer".to_string(), arguments, 1, Gas(5_000_000_000_000));
+    }
+
+    fn append_amount_history(&mut self, coin: String, amount: u128,  bAdd: bool){
+        let coin_id = getcoin_id(coin.clone());
         if self.amount_history.len() == 0 {
+            let mut amounts = vec![0;7];
+            let rewards = vec![0;7];
+            amounts[coin_id] = amount;
+
             self.amount_history.push(AmountInfo{
-                near_amount,
-                near_reward: 0,
+                amount: amounts,
+                reward: rewards,
                 time: env::block_timestamp()
             });
         } 
         else {
             let last_index = self.amount_history.len() - 1;
             let mut info = self.amount_history[last_index].clone();
+
             if bAdd {
-                info.near_amount += near_amount;
+                info.amount[coin_id] += amount;
             } else {
-                info.near_amount -= near_amount;
+                info.amount[coin_id] -= amount;
             }
             info.time = env::block_timestamp();
-            info.near_reward = self.near_total_rewards;
+            info.reward[coin_id] = self.total_rewards[coin_id];
 
             self.amount_history.push(info);
 
-            if last_index > 50 {
+            if last_index > 10 {
                 let mut retain = vec![true; self.amount_history.len()];
                 retain[0] = false;
 
@@ -186,66 +333,148 @@ impl Check for Pool{
         }
     }
 
-    fn deposit_potinfo(&mut self, account: AccountId, near_amount: u128, qualified: bool){
+    fn deposit_potinfo(&mut self, account: AccountId, coin: String,  amount: u128, qualified: bool){
         let mut pot_info = if let Some(info) = self.pot_infos.get(&account) {
                 info
-            } else {
-                PotInfo{
-                    account: account.clone(),
-                    near_amount: 0,
-                    qualified_near_amount: 0
-                }
+            } 
+            else {
+                vec![PotInfo{
+                        account: account.clone(),
+                        amount: 0,
+                        qualified_amount: 0
+                    }; COIN_COUNT]
             };
 
         if qualified {
-            pot_info.qualified_near_amount += near_amount;
+            pot_info[getcoin_id(coin)].qualified_amount += amount;
         } else {
-            pot_info.near_amount += near_amount;
+            pot_info[getcoin_id(coin)].amount += amount;
         }
         self.pot_infos.insert(&account, &pot_info);
     }
+    
+    fn withdraw_potinfo(&mut self, account: AccountId, coin: String, amount: u128) {
+        let res = self.pot_infos.get(&account);
+        if res == None{
+            return;
+        }
+        
+        let coin_id = getcoin_id(coin);
+        let mut pot_info = self.pot_infos.get(&account).unwrap();
+        if pot_info[coin_id].qualified_amount >= amount {
+            pot_info[coin_id].qualified_amount -= amount;
+        }else {
+            pot_info[coin_id].qualified_amount = 0;
+            let _amount = amount - pot_info[coin_id].qualified_amount;
+    
+            if pot_info[coin_id].amount >= _amount {
+                pot_info[coin_id].amount -= _amount;
+            }else{
+                pot_info[coin_id].amount = 0;
+            }
+        }
+        self.pot_infos.insert(&account, &pot_info);
+    }
+    fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT])
+    {
+        let current_time = env::block_timestamp();
+        let farm_starttime = self.farm_starttime;
+        let farm_endtime = farm_starttime + FARM_PERIOD;
+    
+    //-----------------condition check------------------------------
+        if farm_starttime == 0 || current_time < farm_starttime  {
+            return;
+        }
+    
+        if farm_endtime < current_time {
+            return;
+        }
+    //-----------------No farm yet------------------------
+        let res = self.farm_infos.get(&account);
+        if res == None {
+            return;
+        }
+    
+    //--------------------calc farming amount---------------------
+        let coin_id = getcoin_id(coin);
+        let mut farm_info = self.farm_infos.get(&account).unwrap();
+        let mut total_as_usd = 0;
+    
+        let res = self.user_infos.get(&account);
+        match res{
+            Some(user_info) => {
+                for i in 0..COIN_COUNT{
+                    total_as_usd += user_info[i].amount * price[i];
+                }
+            },
+            None =>{ }
+        }
+    
+        if total_as_usd > 0 {
+            let mut withdraw_as_usd = amount * price[coin_id];
+    
+            if withdraw_as_usd > total_as_usd {
+                withdraw_as_usd = total_as_usd;
+            }
+            
+            let withdraw_amount = withdraw_as_usd * farm_info.amount/total_as_usd;
+    
+            farm_info.amount -= withdraw_amount;
+            self.total_farmed -= withdraw_amount;
+            
+            self.farm_infos.insert(&account, &farm_info);
+        }
+    }
+
+    fn update_farm_info( &mut self, account: AccountId, amount: u128 )
+    {
+        let res = self.farm_infos.get(&account);
+        let user_info = match res{
+            Some(mut info) => {
+                info.amount += amount;
+                info
+            },
+            None => FarmInfo{
+                account: account.clone(),
+                amount: amount,
+            }
+        };
+        self.farm_infos.insert(&account, &user_info);
+    }
+    //USDC-0 USDT-1 DAI-2 USN-3 wBTC-4 ETH-5 wNEAR-6
 }
 
 
 #[near_bindgen]
 impl FungibleTokenReceiver for Pool {
-    /// If given `msg: "take-my-money", immediately returns U128::From(0)
-    /// Otherwise, makes a cross-contract call to own `value_please` function, passing `msg`
-    /// value_please will attempt to parse `msg` as an integer and return a U128 version of it
     fn ft_on_transfer(
         &mut self,
         sender_id: AccountId,
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
-        // Verifying that we were called by fungible token contract that we expect.
-        // require!(
-        //     env::predecessor_account_id() == self.fungible_token_account_id,
-        //     "Only supports the one fungible token contract"
-        // );
+
         log!("in {} tokens from @{} ft_on_transfer, msg = {}", amount.0, sender_id.as_ref(), msg);
-        match msg.as_str() {
-            "take-my-money" => PromiseOrValue::Value(U128::from(0)),
-            _ => {
-                PromiseOrValue::Value(U128::from(100))
+
+        let param: DepositParam = serde_json::from_str(msg.as_str()).unwrap();
+        self.deposit(param.coin, amount.into(), param.qualified);
+
+        PromiseOrValue::Value(amount)
+        // match msg.as_str() {
+            // "take-my-money" => PromiseOrValue::Value(U128::from(0)),
+            // _ => {
+                // PromiseOrValue::Value(U128::from(100))
                 // let prepaid_gas = env::prepaid_gas();
                 // let account_id = env::current_account_id();
                 // Self::ext(account_id)
                 //     .with_static_gas(prepaid_gas - GAS_FOR_FT_ON_TRANSFER)
                 //     .value_please(msg)
                 //     .into()
-            }
-        }
+            // }
+        // }
     }
 }
-/*
- * the rest of this file sets up unit tests
- * to run these, the command will be:
- * cargo test --package rust-template -- --nocapture
- * Note: 'rust-template' comes from Cargo.toml's 'name' key
- */
 
-// use the attribute below for unit tests
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,23 +507,59 @@ mod tests {
         let alice = AccountId::new_unchecked("alice.testnet".to_string());
         let owner = None;
         let treasury = AccountId::new_unchecked("treasury.testnet".to_string());
-        let vnear = AccountId::new_unchecked("vnear.testnet".to_string());
+        
         let near_apr = 121;
         // Set up the testing context and unit test environment
         let mut context = get_context(alice.clone());
-        testing_env!(context.build());
-
-        let mut pool = Pool::new(owner, treasury, near_apr, vnear );
-
         testing_env!(context
             .storage_usage(env::storage_usage())
-            .attached_deposit(1)
+            // .attached_deposit(1)
             .predecessor_account_id(alice.clone())
             .block_timestamp(12345678)
             .build());
-        pool.deposit_near(true);
 
+        let mut pool = Pool::new(owner, treasury.clone() );
+
+        testing_env!(context
+            .storage_usage(env::storage_usage())
+            // .attached_deposit(1)
+            .predecessor_account_id(alice.clone())
+            .block_timestamp(12345678)
+            .build());
+        
+        let val = DepositParam{
+            coin: "wBTC".to_string(),
+            qualified: true
+        };
+        let arguments = json!(val) // method arguments
+            .to_string();
+
+        pool.ft_on_transfer(alice.clone(), U128::from(100_000_000), arguments);
+
+        testing_env!(context
+            .storage_usage(env::storage_usage())
+            // .attached_deposit(1)
+            .predecessor_account_id(treasury.clone())
+            .block_timestamp(13355678)
+            .build());
+        pool.rewards();
+
+        const price: [u128;7] = [500000; 7];
+        pool.withdraw(alice.clone(), "wBTC".to_string(), 50_000_000, price);
+
+        testing_env!(context
+            .storage_usage(env::storage_usage())
+            // .attached_deposit(1)
+            .predecessor_account_id(treasury.clone())
+            .block_timestamp(14345678)
+            .build());
+        pool.farm(price);
+
+
+        let coin_id = getcoin_id("wBTC".to_string());
         let res = pool.get_status(alice.clone());
-        println!("{:?}", res.near_userinfo);
+        println!("{:?}", res.user_info);
+        println!("{:?}", res.farm_info);
+        
     }
 }
