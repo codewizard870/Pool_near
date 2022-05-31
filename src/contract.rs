@@ -51,7 +51,7 @@ pub struct Pool {
     total_farmed: u128,
     
     //--------qualify----------------------
-    pot_infos: LookupMap<AccountId, Vec<PotInfo>>,
+    pot_infos: UnorderedMap<AccountId, Vec<PotInfo>>,
 
     //-------_token address--------------------
     token_address: Vec<AccountId>
@@ -76,7 +76,7 @@ impl Pool {
             farm_price: 25,
             farm_infos: LookupMap::new(b"f"),
             total_farmed: 0,
-            pot_infos: LookupMap::new(b"p"),
+            pot_infos: UnorderedMap::new(b"p"),
             token_address: vec![wnear; COIN_COUNT]
         }
     }
@@ -105,7 +105,7 @@ impl Pool {
     }
 
     pub fn withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT]){
-        self.check_onlytreasury();
+        // self.check_onlytreasury();
 
         let mut user_info = self.user_infos.get(&account).unwrap();
         let coin_id = getcoin_id(coin.clone());
@@ -210,7 +210,33 @@ impl Pool {
                             (10u128).pow(multiple as u32);
         self.farm_price = price as u128;
     }
-        
+ 
+    pub fn pot_process(&mut self){
+        self.check_onlytreasury();
+
+        let keys = self.pot_infos.to_vec();
+
+        for i in 0..keys.len()
+        {
+            let mut pot_info = keys[i].1.clone();
+
+            let mut bnone = true;
+            for j in 0..COIN_COUNT { 
+                pot_info[j].qualified_amount = pot_info[j].amount;
+                pot_info[j].amount = 0;
+                
+                if pot_info[j].qualified_amount != 0 {
+                    bnone = false;
+                }
+            }
+            if bnone == true{
+                self.pot_infos.remove(&keys[i].0);
+            }else{
+                self.pot_infos.insert(&keys[i].0, &pot_info);
+            }
+        }
+    }
+           
     pub fn get_status(self, account: AccountId) -> Status{
         let userinfo = match self.user_infos.get(&account){
             Some(info) => info,
@@ -265,7 +291,7 @@ impl Check for Pool{
     }
 
     fn deposit(&mut self, coin: String, amount: u128, qualified: bool) {
-        let account = env::predecessor_account_id();
+        let account = env::signer_account_id();
  
         let coin_id = getcoin_id(coin.clone());
         if let Some(mut user_info) = self.user_infos.get(&account){
