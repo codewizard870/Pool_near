@@ -22,7 +22,8 @@ pub struct UserInfo{
 	pub account: AccountId,
 	pub amount: u128,
 	pub reward_amount: u128,
-    pub deposit_time: u64
+    pub deposit_time: u64,
+    pub withdraw_reserve: u128,
 }
 impl fmt::Debug for UserInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

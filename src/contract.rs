@@ -103,13 +103,28 @@ impl Pool {
 
         self.apr[getcoin_id(coin)] = apr;
     }
+    pub fn withdraw_reserve(&mut self, coin: String, amount: u128){
+        let account = env::signer_account_id();
+        let mut user_info = self.user_infos.get(&account).unwrap();
+        let coin_id = getcoin_id(coin.clone());
 
+        if user_info[coin_id].amount + user_info[coin_id].reward_amount < amount {
+            return env::panic_str("Not enough balance")
+        }
+
+        user_info[coin_id].withdraw_reserve = amount;
+        self.user_infos.insert(&account, &user_info);
+    }
     pub fn withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT]){
-        // self.check_onlytreasury();
+        self.check_onlytreasury();
 
         let mut user_info = self.user_infos.get(&account).unwrap();
         let coin_id = getcoin_id(coin.clone());
         
+        if user_info[coin_id].withdraw_reserve < amount {
+            return env::panic_str("Not enough reserved")
+        }
+
         if user_info[coin_id].amount + user_info[coin_id].reward_amount < amount {
             return env::panic_str("Not enough balance")
         }
@@ -125,6 +140,7 @@ impl Pool {
 
             self.total_rewards[coin_id] -= amount - remain;
         }
+        user_info[coin_id].withdraw_reserve = 0;
 
         self.append_amount_history(coin.clone(), remain, false);
         self.withdraw_potinfo(account.clone(), coin.clone(), remain);
@@ -244,7 +260,8 @@ impl Pool {
                 account: account.clone(),
                 amount: 0,
                 reward_amount: 0,
-                deposit_time: 0
+                deposit_time: 0,
+                withdraw_reserve: 0
             }; COIN_COUNT]
         };
 
@@ -304,7 +321,8 @@ impl Check for Pool{
                 account: account.clone(),
                 amount: 0,
                 reward_amount: 0,
-                deposit_time: 0
+                deposit_time: 0,
+                withdraw_reserve: 0,
             }; 7];
             user_info[coin_id].amount = amount;
             user_info[coin_id].deposit_time = env::block_timestamp();
