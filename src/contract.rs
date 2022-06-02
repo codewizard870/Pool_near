@@ -108,42 +108,44 @@ impl Pool {
 
         self.apr[getcoin_id(coin)] = apr;
     }
-    pub fn withdraw_reserve(&mut self, coin: String, amount: u128){
+    pub fn withdraw_reserve(&mut self, coin: String, amount: U128){
+        let _amount: u128 = amount.into();
         let account = env::signer_account_id();
         let mut user_info = self.user_infos.get(&account).unwrap();
         let coin_id = getcoin_id(coin.clone());
 
-        if user_info[coin_id].amount + user_info[coin_id].reward_amount < amount {
+        if user_info[coin_id].amount + user_info[coin_id].reward_amount < _amount {
             return env::panic_str("Not enough balance")
         }
 
-        user_info[coin_id].withdraw_reserve = amount;
+        user_info[coin_id].withdraw_reserve = _amount;
         self.user_infos.insert(&account, &user_info);
     }
-    pub fn withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT]){
+    pub fn withdraw(&mut self, account: AccountId, coin: String, amount: U128, price: [U128; COIN_COUNT]){
         self.check_onlytreasury();
 
+        let _amount: u128 = amount.into();
         let mut user_info = self.user_infos.get(&account).unwrap();
         let coin_id = getcoin_id(coin.clone());
         
-        if user_info[coin_id].withdraw_reserve < amount {
+        if user_info[coin_id].withdraw_reserve < _amount {
             return env::panic_str("Not enough reserved")
         }
 
-        if user_info[coin_id].amount + user_info[coin_id].reward_amount < amount {
+        if user_info[coin_id].amount + user_info[coin_id].reward_amount < _amount {
             return env::panic_str("Not enough balance")
         }
 
         let remain;
-        if user_info[coin_id].amount >= amount {
-            remain = amount;
-            user_info[coin_id].amount -= amount;
+        if user_info[coin_id].amount >= _amount {
+            remain = _amount;
+            user_info[coin_id].amount -= _amount;
         } else {
             remain = user_info[coin_id].amount;
             user_info[coin_id].amount = 0;
-            user_info[coin_id].reward_amount -= amount - remain;
+            user_info[coin_id].reward_amount -= _amount - remain;
 
-            self.total_rewards[coin_id] -= amount - remain;
+            self.total_rewards[coin_id] -= _amount - remain;
         }
         user_info[coin_id].withdraw_reserve = 0;
 
@@ -202,7 +204,7 @@ impl Pool {
         }
     }
 
-    pub fn farm(&mut self, price: [u128; COIN_COUNT]){
+    pub fn farm(&mut self, price: [U128; COIN_COUNT]){
         self.check_onlytreasury();
     
         let current_time = env::block_timestamp_ms();
@@ -229,9 +231,10 @@ log!("farm starttime {} current_time{} endtime {}", farm_starttime, current_time
             let mut farm = 0;
             
             for i in 0..COIN_COUNT{
-                farm += user_info[i].amount * price[i] * 24 / (10u128).pow(DECIMALS[i]) / (10u128).pow(5);
-log!("acount{} farm amount {} - useramount {} price {} Decimal {}", key, farm, user_info[i].amount, price[i], DECIMALS[i]);
-                total_as_usd += user_info[i].amount * price[i] / (10u128).pow(DECIMALS[i]) / 100;
+                let _price: u128 = price[i].into();
+                farm += user_info[i].amount * _price * 24 / (10u128).pow(DECIMALS[i]) / (10u128).pow(5);
+log!("acount{} farm amount {} - useramount {} price {} Decimal {}", key, farm, user_info[i].amount, _price, DECIMALS[i]);
+                total_as_usd += user_info[i].amount * _price / (10u128).pow(DECIMALS[i]) / 100;
             }
 
             self.update_farm_info(key, farm);
@@ -458,7 +461,7 @@ impl Check for Pool{
         }
         self.pot_infos.insert(&account, &pot_info);
     }
-    fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT])
+    fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [U128; COIN_COUNT])
     {
         let current_time = env::block_timestamp_ms();
         let farm_starttime = self.farm_starttime;
@@ -487,14 +490,16 @@ impl Check for Pool{
         match res{
             Some(user_info) => {
                 for i in 0..COIN_COUNT{
-                    total_as_usd += user_info[i].amount * price[i];
+                    let _price: u128 = price[i].into();
+                    total_as_usd += user_info[i].amount * _price;
                 }
             },
             None =>{ }
         }
     
         if total_as_usd > 0 {
-            let mut withdraw_as_usd = amount * price[coin_id];
+            let _price: u128 = price[coin_id].into();
+            let mut withdraw_as_usd = amount * _price;
     
             if withdraw_as_usd > total_as_usd {
                 withdraw_as_usd = total_as_usd;
@@ -626,8 +631,8 @@ mod tests {
             .build());
         pool.rewards();
 
-        const price: [u128;7] = [500000; 7];
-        pool.withdraw(alice.clone(), "wBTC".to_string(), 50_000_000, price);
+        let price: [U128;7] = [U128::from(500000); 7];
+        pool.withdraw(alice.clone(), "wBTC".to_string(), U128::from(50_000_000), price);
 
         testing_env!(context
             .storage_usage(env::storage_usage())
