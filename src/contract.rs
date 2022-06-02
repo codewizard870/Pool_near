@@ -13,7 +13,8 @@ const BASE_GAS: u64 = 5_000_000_000_000;
 const PROMISE_CALL: u64 = 5_000_000_000_000;
 const GAS_FOR_FT_ON_TRANSFER: Gas = Gas(BASE_GAS + PROMISE_CALL);
 const FARM_AMOUNT: u128 = 114_000_000;
-const FARM_PERIOD: u64 = 5_184_000; //60 days in second
+const FARM_PERIOD: u64 = 5_184_000_000; //60 days in msecond
+const REWARD_TIME: u64 = 600_000; //10minutes //24 hours for reward in msecond
 
 pub const COIN_COUNT: usize = 7;
 const COINS: [&str; 7] = ["USDC", "USDT", "DAI", "USN", "wBTC", "ETH", "wNEAR"];
@@ -47,7 +48,7 @@ pub struct Pool {
     //--------farm-----------------
     farm_starttime: u64,
     farm_price: u128,
-    farm_infos: LookupMap<AccountId, FarmInfo>,
+    farm_infos: UnorderedMap<AccountId, FarmInfo>,
     total_farmed: u128,
     
     //--------qualify----------------------
@@ -72,15 +73,19 @@ impl Pool {
             user_infos: UnorderedMap::new(b"n"),
             total_rewards: vec![0; COIN_COUNT],
             amount_history: Vec::new(),
-            farm_starttime: env::block_timestamp(),
+            farm_starttime: env::block_timestamp_ms(),
             farm_price: 25,
-            farm_infos: LookupMap::new(b"f"),
+            farm_infos: UnorderedMap::new(b"f"),
             total_farmed: 0,
             pot_infos: UnorderedMap::new(b"p"),
             token_address: vec![wnear; COIN_COUNT]
         }
     }
-
+    pub fn delete_all(&mut self){
+        self.amount_history.clear();
+        self.user_infos.clear();
+        self.pot_infos.clear();
+    }
     pub fn set_config(&mut self, owner: Option<AccountId>, treasury: Option<AccountId>){
         self.check_onlyowner();
         if let Some(account) = owner {
@@ -156,8 +161,9 @@ impl Pool {
     pub fn rewards(&mut self){
         self.check_onlytreasury();
 
-        let available_time = env::block_timestamp() - 86400;
+        let available_time = env::block_timestamp_ms() - REWARD_TIME;
         let keys = self.user_infos.to_vec();
+        let mut bmodified = false;
         for i in 0..keys.len()
         {
             let key = keys[i].0.clone();
@@ -170,31 +176,44 @@ impl Pool {
                     let rewards = (user_info[coin_id].amount + user_info[coin_id].reward_amount) * (apr as u128) / 10_000 / 365;
                     user_info[coin_id].reward_amount += rewards;
                     self.total_rewards[coin_id] += rewards;
+                    if rewards > 0{
+                        bmodified = true;
+                    }
                 }
             }
             self.user_infos.insert(&key, &user_info);
         }
 
-        let last_index = self.amount_history.len() - 1;
-        let mut info = self.amount_history[last_index].clone();
-        for i in 0..COIN_COUNT{
-            info.reward[i] = self.total_rewards[i];
+        if bmodified && self.amount_history.len() > 0 {
+            let last_index = self.amount_history.len() - 1;
+            let mut info = self.amount_history[last_index].clone();
+            for i in 0..COIN_COUNT{
+                info.reward[i] = self.total_rewards[i];
+            }
+            self.amount_history.push(info);
+
+            if last_index > 10 {
+                let mut retain = vec![true; self.amount_history.len()];
+                retain[0] = false;
+
+                let mut iter = retain.iter();
+                self.amount_history.retain(|_| *iter.next().unwrap());
+            }
         }
-        self.amount_history.push(info);
     }
 
     pub fn farm(&mut self, price: [u128; COIN_COUNT]){
         self.check_onlytreasury();
     
-        let current_time = env::block_timestamp();
+        let current_time = env::block_timestamp_ms();
         let farm_starttime = self.farm_starttime;
         let farm_endtime = farm_starttime + FARM_PERIOD;
-    
+
     //-----------------condition check------------------------------
         if farm_starttime == 0 || current_time < farm_starttime  {
             return env::panic_str("NotStartedFarming")
         }
-    
+log!("farm starttime {} current_time{} endtime {}", farm_starttime, current_time, farm_endtime);
         let mut total_farm = self.total_farmed;
         if farm_endtime < current_time || total_farm > FARM_AMOUNT {
             return;
@@ -211,16 +230,18 @@ impl Pool {
             
             for i in 0..COIN_COUNT{
                 farm += user_info[i].amount * price[i] * 24 / (10u128).pow(DECIMALS[i]) / (10u128).pow(5);
-                total_as_usd += user_info[i].amount * price[i];
+log!("acount{} farm amount {} - useramount {} price {} Decimal {}", key, farm, user_info[i].amount, price[i], DECIMALS[i]);
+                total_as_usd += user_info[i].amount * price[i] / (10u128).pow(DECIMALS[i]) / 100;
             }
+
             self.update_farm_info(key, farm);
             total_farm += farm;
         }
 
         self.total_farmed = total_farm;
     //-------------------recalc token price ------------------------------------
-        //x/10^6) * (price / 10^2) / 20,000,000
-        let multiple = total_as_usd / (100_000_000u128) / (20_000_000u128);
+        //x * (price / 10^2) / 20,000,000
+        let multiple = total_as_usd / (20_000_000u128);
         //0.25*(1.2)^multiple = 25/10^2 * (12) ^ multiple) /(10^multiple) *10^2
         let price = 25 * (12u128).pow(multiple as u32) / 
                             (10u128).pow(multiple as u32);
@@ -252,7 +273,25 @@ impl Pool {
             }
         }
     }
-           
+    pub fn get_pot_info(self) -> Vec<Vec<PotInfo>> {
+        let keys = self.pot_infos.to_vec();
+        let mut infos: Vec<Vec<PotInfo>> = vec![];
+        for i in 0..keys.len(){
+            infos.push(keys[i].1.clone())
+        }
+        infos
+    }
+    pub fn get_farm_info(self) -> Vec<FarmInfo> {
+        let keys = self.farm_infos.to_vec();
+        let mut infos: Vec<FarmInfo> = vec![];
+        for i in 0..keys.len(){
+            infos.push(keys[i].1.clone())
+        }
+        infos
+    }
+    pub fn get_amount_history(self) -> Vec<AmountInfo> {
+        self.amount_history
+    }
     pub fn get_status(self, account: AccountId) -> Status{
         let userinfo = match self.user_infos.get(&account){
             Some(info) => info,
@@ -313,7 +352,7 @@ impl Check for Pool{
         let coin_id = getcoin_id(coin.clone());
         if let Some(mut user_info) = self.user_infos.get(&account){
             user_info[coin_id].amount += amount;
-            user_info[coin_id].deposit_time = env::block_timestamp();
+            user_info[coin_id].deposit_time = env::block_timestamp_ms();
 
             self.user_infos.insert(&account, &user_info);
         } else {
@@ -325,7 +364,7 @@ impl Check for Pool{
                 withdraw_reserve: 0,
             }; 7];
             user_info[coin_id].amount = amount;
-            user_info[coin_id].deposit_time = env::block_timestamp();
+            user_info[coin_id].deposit_time = env::block_timestamp_ms();
 
             self.user_infos.insert(&account, &user_info);
         }
@@ -350,7 +389,7 @@ impl Check for Pool{
             self.amount_history.push(AmountInfo{
                 amount: amounts,
                 reward: rewards,
-                time: env::block_timestamp()
+                time: env::block_timestamp_ms()
             });
         } 
         else {
@@ -362,7 +401,7 @@ impl Check for Pool{
             } else {
                 info.amount[coin_id] -= amount;
             }
-            info.time = env::block_timestamp();
+            info.time = env::block_timestamp_ms();
             info.reward[coin_id] = self.total_rewards[coin_id];
 
             self.amount_history.push(info);
@@ -421,7 +460,7 @@ impl Check for Pool{
     }
     fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT])
     {
-        let current_time = env::block_timestamp();
+        let current_time = env::block_timestamp_ms();
         let farm_starttime = self.farm_starttime;
         let farm_endtime = farm_starttime + FARM_PERIOD;
     
@@ -470,8 +509,7 @@ impl Check for Pool{
         }
     }
 
-    fn update_farm_info( &mut self, account: AccountId, amount: u128 )
-    {
+    fn update_farm_info( &mut self, account: AccountId, amount: u128 ){
         let res = self.farm_infos.get(&account);
         let user_info = match res{
             Some(mut info) => {
