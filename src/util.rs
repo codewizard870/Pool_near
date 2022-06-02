@@ -8,8 +8,9 @@ pub trait Check{
     fn append_amount_history(&mut self, coin: String, amount: u128,  bAdd: bool);
     fn deposit_potinfo(&mut self, account: AccountId, coin: String, amount: u128, qualified: bool);
     fn withdraw_potinfo(&mut self, account: AccountId, coin: String, amount: u128);
-    fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [U128; COIN_COUNT]);
+    fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT]);
     fn update_farm_info( &mut self, account: AccountId, amount: u128 );
 
     fn deposit(&mut self, coin: String, amount: u128, qualified: bool);
+    fn withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT]);
 }

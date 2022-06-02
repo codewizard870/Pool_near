@@ -2,7 +2,10 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault};
 use near_sdk::serde::{Serialize, Deserialize};
 use near_sdk::collections::LookupMap;
+use near_sdk::json_types::U128;
 use std::fmt;
+
+use crate::contract::{COIN_COUNT};
 
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
@@ -75,6 +78,14 @@ impl fmt::Debug for PotInfo {
 pub struct DepositParam{
     pub coin: String,
     pub qualified: bool,
+}
+
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+pub struct WithdrawParam{
+    pub account: AccountId,
+    pub coin: String,
+    pub price: [u128; COIN_COUNT],
 }
 
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]

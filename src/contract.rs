@@ -6,12 +6,12 @@ use near_sdk::json_types::U128;
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use serde_json::json;
 
-use crate::msg::{AprInfo, UserInfo, AmountInfo, FarmInfo, PotInfo, Status, DepositParam};
+use crate::msg::{AprInfo, UserInfo, AmountInfo, FarmInfo, PotInfo, Status, DepositParam, WithdrawParam};
 use crate::util::{Check};
 
-const BASE_GAS: u64 = 5_000_000_000_000;
-const PROMISE_CALL: u64 = 5_000_000_000_000;
-const GAS_FOR_FT_ON_TRANSFER: Gas = Gas(BASE_GAS + PROMISE_CALL);
+// const BASE_GAS: u64 = 5_000_000_000_000;
+// const PROMISE_CALL: u64 = 5_000_000_000_000;
+// const GAS_FOR_FT_ON_TRANSFER: Gas = Gas(BASE_GAS + PROMISE_CALL);
 const FARM_AMOUNT: u128 = 114_000_000;
 const FARM_PERIOD: u64 = 5_184_000_000; //60 days in msecond
 const REWARD_TIME: u64 = 600_000; //10minutes //24 hours for reward in msecond
@@ -121,40 +121,6 @@ impl Pool {
         user_info[coin_id].withdraw_reserve = _amount;
         self.user_infos.insert(&account, &user_info);
     }
-    pub fn withdraw(&mut self, account: AccountId, coin: String, amount: U128, price: [U128; COIN_COUNT]){
-        self.check_onlytreasury();
-
-        let _amount: u128 = amount.into();
-        let mut user_info = self.user_infos.get(&account).unwrap();
-        let coin_id = getcoin_id(coin.clone());
-        
-        if user_info[coin_id].withdraw_reserve < _amount {
-            return env::panic_str("Not enough reserved")
-        }
-
-        if user_info[coin_id].amount + user_info[coin_id].reward_amount < _amount {
-            return env::panic_str("Not enough balance")
-        }
-
-        let remain;
-        if user_info[coin_id].amount >= _amount {
-            remain = _amount;
-            user_info[coin_id].amount -= _amount;
-        } else {
-            remain = user_info[coin_id].amount;
-            user_info[coin_id].amount = 0;
-            user_info[coin_id].reward_amount -= _amount - remain;
-
-            self.total_rewards[coin_id] -= _amount - remain;
-        }
-        user_info[coin_id].withdraw_reserve = 0;
-
-        self.append_amount_history(coin.clone(), remain, false);
-        self.withdraw_potinfo(account.clone(), coin.clone(), remain);
-        self.farm_withdraw(account.clone(), coin.clone(), remain, price);
-
-        self.user_infos.insert(&account.clone(), &user_info);
-    }
 
     fn get_user_info(&self, owner_id: &AccountId) -> Vec<UserInfo> {
         self.user_infos.get(owner_id).unwrap()
@@ -204,7 +170,7 @@ impl Pool {
         }
     }
 
-    pub fn farm(&mut self, price: [U128; COIN_COUNT]){
+    pub fn farm(&mut self, price: [u128; COIN_COUNT]){
         self.check_onlytreasury();
     
         let current_time = env::block_timestamp_ms();
@@ -215,7 +181,7 @@ impl Pool {
         if farm_starttime == 0 || current_time < farm_starttime  {
             return env::panic_str("NotStartedFarming")
         }
-log!("farm starttime {} current_time{} endtime {}", farm_starttime, current_time, farm_endtime);
+
         let mut total_farm = self.total_farmed;
         if farm_endtime < current_time || total_farm > FARM_AMOUNT {
             return;
@@ -231,9 +197,8 @@ log!("farm starttime {} current_time{} endtime {}", farm_starttime, current_time
             let mut farm = 0;
             
             for i in 0..COIN_COUNT{
-                let _price: u128 = price[i].into();
+                let _price: u128 = price[i];
                 farm += user_info[i].amount * _price * 24 / (10u128).pow(DECIMALS[i]) / (10u128).pow(5);
-log!("acount{} farm amount {} - useramount {} price {} Decimal {}", key, farm, user_info[i].amount, _price, DECIMALS[i]);
                 total_as_usd += user_info[i].amount * _price / (10u128).pow(DECIMALS[i]) / 100;
             }
 
@@ -256,8 +221,7 @@ log!("acount{} farm amount {} - useramount {} price {} Decimal {}", key, farm, u
 
         let keys = self.pot_infos.to_vec();
 
-        for i in 0..keys.len()
-        {
+        for i in 0..keys.len(){
             let mut pot_info = keys[i].1.clone();
 
             let mut bnone = true;
@@ -337,7 +301,6 @@ log!("acount{} farm amount {} - useramount {} price {} Decimal {}", key, farm, u
 }
 
 impl Check for Pool{
-
     fn check_onlyowner(&self){
         if self.owner != env::predecessor_account_id() {
             env::panic_str("Not Authorized")
@@ -382,6 +345,45 @@ impl Check for Pool{
             .function_call("ft_transfer".to_string(), arguments, 1, Gas(5_000_000_000_000));
     }
 
+    fn withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT]){
+        self.check_onlytreasury();
+
+        let mut user_info = self.user_infos.get(&account).unwrap();
+        let coin_id = getcoin_id(coin.clone());
+        
+        if user_info[coin_id].withdraw_reserve < amount {
+            return env::panic_str("Not enough reserved")
+        }
+
+        if user_info[coin_id].amount + user_info[coin_id].reward_amount < amount {
+            return env::panic_str("Not enough balance")
+        }
+
+        let remain;
+        if user_info[coin_id].amount >= amount {
+            remain = amount;
+            user_info[coin_id].amount -= amount;
+        } else {
+            remain = user_info[coin_id].amount;
+            user_info[coin_id].amount = 0;
+            user_info[coin_id].reward_amount -= amount - remain;
+
+            self.total_rewards[coin_id] -= amount - remain;
+        }
+        user_info[coin_id].withdraw_reserve = 0;
+
+        self.append_amount_history(coin.clone(), remain, false);
+        self.withdraw_potinfo(account.clone(), coin.clone(), remain);
+        self.farm_withdraw(account.clone(), coin.clone(), remain, price);
+
+        self.user_infos.insert(&account.clone(), &user_info);
+
+        let arguments = json!({ "receiver_id": account.to_string(), "amount": amount.to_string() }) // method arguments
+            .to_string()
+            .into_bytes();
+        Promise::new(self.token_address[coin_id].clone())
+            .function_call("ft_transfer".to_string(), arguments, 1, Gas(5_000_000_000_000));
+    }
     fn append_amount_history(&mut self, coin: String, amount: u128,  bAdd: bool){
         let coin_id = getcoin_id(coin.clone());
         if self.amount_history.len() == 0 {
@@ -461,7 +463,7 @@ impl Check for Pool{
         }
         self.pot_infos.insert(&account, &pot_info);
     }
-    fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [U128; COIN_COUNT])
+    fn farm_withdraw(&mut self, account: AccountId, coin: String, amount: u128, price: [u128; COIN_COUNT])
     {
         let current_time = env::block_timestamp_ms();
         let farm_starttime = self.farm_starttime;
@@ -498,7 +500,7 @@ impl Check for Pool{
         }
     
         if total_as_usd > 0 {
-            let _price: u128 = price[coin_id].into();
+            let _price: u128 = price[coin_id];
             let mut withdraw_as_usd = amount * _price;
     
             if withdraw_as_usd > total_as_usd {
@@ -540,25 +542,17 @@ impl FungibleTokenReceiver for Pool {
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
-
         log!("in {} tokens from @{} ft_on_transfer, msg = {}", amount.0, sender_id.as_ref(), msg);
 
-        let param: DepositParam = serde_json::from_str(msg.as_str()).unwrap();
-        self.deposit(param.coin, amount.into(), param.qualified);
-
+        let account = env::signer_account_id();
+        if account == self.treasury{ //withdraw
+            let param: WithdrawParam = serde_json::from_str(msg.as_str()).unwrap();
+            self.withdraw(param.account, param.coin, amount.into(), param.price);
+        } else { //deposit
+            let param: DepositParam = serde_json::from_str(msg.as_str()).unwrap();
+            self.deposit(param.coin, amount.into(), param.qualified);
+        }
         PromiseOrValue::Value(amount)
-        // match msg.as_str() {
-            // "take-my-money" => PromiseOrValue::Value(U128::from(0)),
-            // _ => {
-                // PromiseOrValue::Value(U128::from(100))
-                // let prepaid_gas = env::prepaid_gas();
-                // let account_id = env::current_account_id();
-                // Self::ext(account_id)
-                //     .with_static_gas(prepaid_gas - GAS_FOR_FT_ON_TRANSFER)
-                //     .value_please(msg)
-                //     .into()
-            // }
-        // }
     }
 }
 
@@ -631,8 +625,8 @@ mod tests {
             .build());
         pool.rewards();
 
-        let price: [U128;7] = [U128::from(500000); 7];
-        pool.withdraw(alice.clone(), "wBTC".to_string(), U128::from(50_000_000), price);
+        let price: [u128;7] = [500000; 7];
+        pool.withdraw(alice.clone(), "wBTC".to_string(), 50_000_000, price);
 
         testing_env!(context
             .storage_usage(env::storage_usage())
