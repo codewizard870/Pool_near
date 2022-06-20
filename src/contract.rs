@@ -18,7 +18,7 @@ use crate::util::Check;
 const FARM_AMOUNT: u128 = 420_000_000;
 const FARM_PERIOD: u64 = 5_184_000_000; //60 days in msecond
 const REWARD_TIME: u64 = 600_000; //10minutes //24 hours for reward in msecond
-const NEAR_DECIMALS: u32 = 24;
+const NEART_DECIMALS: u32 = 6;
 
 pub const COIN_COUNT: usize = 7;
 const COINS: [&str; 7] = [
@@ -111,6 +111,8 @@ impl Pool {
 
         self.apr[getcoin_id(coin)] = apr;
     }
+
+    #[payable]
     pub fn withdraw_reserve(&mut self, coin: String, amount: U128) {
         let _amount: u128 = amount.into();
         let account = env::signer_account_id();
@@ -188,7 +190,7 @@ impl Pool {
 
         let mut total_farm = self.total_farmed;
 
-        let farm_amount = FARM_AMOUNT * (10u128).pow(NEAR_DECIMALS);
+        let farm_amount = FARM_AMOUNT * (10u128).pow(NEART_DECIMALS);
 
         if farm_endtime < current_time || total_farm > farm_amount {
             return;
@@ -205,7 +207,7 @@ impl Pool {
             for i in 0..COIN_COUNT {
                 let _price: u128 = price[i];
                 farm += user_info[i].amount * _price * 24 / (10u128).pow(DECIMALS[i])
-                    * (10u128).pow(NEAR_DECIMALS) / 100_000;
+                    * (10u128).pow(NEART_DECIMALS) / 100_000;
                 total_as_usd += user_info[i].amount * _price / (10u128).pow(DECIMALS[i]) / 100;
             }
 
@@ -217,8 +219,8 @@ impl Pool {
         //-------------------recalc token price ------------------------------------
         //x * (price / 10^2) / 20,000,000
         let multiple = total_as_usd / (20_000_000u128);
-        //0.25*(1.2)^multiple = 25/10^2 * (12) ^ multiple) /(10^multiple) *10^2
-        let price = 25 * (12u128).pow(multiple as u32) / (10u128).pow(multiple as u32);
+        //0.18*(1.2)^multiple = 18/10^2 * (12) ^ multiple) /(10^multiple) *10^2
+        let price = 18 * (12u128).pow(multiple as u32) / (10u128).pow(multiple as u32);
         self.farm_price = price as u128;
     }
 
