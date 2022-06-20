@@ -371,8 +371,6 @@ impl Check for Pool {
         amount: u128,
         price: [u128; COIN_COUNT],
     ) {
-        self.check_onlytreasury();
-
         let mut user_info = self.user_infos.get(&account).unwrap();
         let coin_id = getcoin_id(coin.clone());
         if user_info[coin_id].withdraw_reserve < amount {
