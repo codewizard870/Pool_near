@@ -18,12 +18,13 @@ use crate::util::Check;
 const FARM_AMOUNT: u128 = 420_000_000;
 const FARM_PERIOD: u64 = 5_184_000_000; //60 days in msecond
 const REWARD_TIME: u64 = 600_000; //10minutes //24 hours for reward in msecond
+const NEAR_DECIMALS: u32 = 24;
 
 pub const COIN_COUNT: usize = 7;
-const COINS: [&str; 8] = [
-    "USDC", "USDT", "DAI", "USN", "wBTC", "ETH", "wNEAR", "NearT",
+const COINS: [&str; 7] = [
+    "USDC", "USDT", "DAI", "USN", "wBTC", "ETH", "wNEAR",
 ];
-const DECIMALS: [u32; 8] = [6, 6, 18, 18, 8, 18, 24, 24];
+const DECIMALS: [u32; 7] = [6, 6, 18, 18, 8, 18, 24];
 
 pub fn getcoin_id(coin: String) -> usize {
     let res = match coin.as_str() {
@@ -34,7 +35,6 @@ pub fn getcoin_id(coin: String) -> usize {
         "wBTC" => 4,
         "ETH" => 5,
         "wNEAR" => 6,
-        "NearT" => 7,
         _ => env::panic_str("Not correct coin type"),
     };
     res
@@ -72,12 +72,12 @@ impl Pool {
                 None => env::current_account_id(),
             },
             treasury: treasury,
-            apr: vec![2397, 2397, 2397, 2397, 915, 915, 1461],
+            apr: vec![2149, 2149, 2149, 2149, 876, 876, 1365],
             user_infos: UnorderedMap::new(b"n"),
             total_rewards: vec![0; COIN_COUNT],
             amount_history: Vec::new(),
             farm_starttime: env::block_timestamp_ms(),
-            farm_price: 25,
+            farm_price: 18,
             farm_infos: UnorderedMap::new(b"f"),
             total_farmed: 0,
             pot_infos: UnorderedMap::new(b"p"),
@@ -187,8 +187,8 @@ impl Pool {
         }
 
         let mut total_farm = self.total_farmed;
-        let neart_decimals = DECIMALS[getcoin_id("NearT".to_string())];
-        let farm_amount = FARM_AMOUNT * (10u128).pow(neart_decimals);
+
+        let farm_amount = FARM_AMOUNT * (10u128).pow(NEAR_DECIMALS);
 
         if farm_endtime < current_time || total_farm > farm_amount {
             return;
@@ -204,8 +204,8 @@ impl Pool {
 
             for i in 0..COIN_COUNT {
                 let _price: u128 = price[i];
-                farm += user_info[i].amount * _price * 24
-                    / (10u128).pow(neart_decimals - DECIMALS[i] - 5);
+                farm += user_info[i].amount * _price * 24 / (10u128).pow(DECIMALS[i])
+                    * (10u128).pow(NEAR_DECIMALS) / 100_000;
                 total_as_usd += user_info[i].amount * _price / (10u128).pow(DECIMALS[i]) / 100;
             }
 
