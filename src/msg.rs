@@ -100,3 +100,10 @@ pub struct Status{
     pub total_rewards: Vec<u128>,
     pub pot_info: Vec<PotInfo>,
 }
+
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct FarmResult{
+    pub user_info: Vec<UserInfo>,
+    pub farm_info: FarmInfo,
+}
