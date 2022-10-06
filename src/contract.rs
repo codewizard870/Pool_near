@@ -620,6 +620,7 @@ mod tests {
 
    #[test]
    fn main_test() {
+      println!("{:03}",12);
       // Get Alice as an account ID
       let alice = AccountId::new_unchecked("alice.testnet".to_string());
       let owner = None;
